@@ -36,14 +36,34 @@ func (k *KeychainStore) Get(profileName string) (string, error) {
 }
 
 func (k *KeychainStore) Set(profileName, value string) error {
-	// A profile has exactly one secret at a time, so overwriting means
-	// delete-then-add rather than a partial attribute update. The delete is
-	// expected to fail with "item not found" the first time a profile's
-	// secret is set, which is fine, there's nothing to remove yet.
-	if err := keychain.DeleteGenericPasswordItem(keychainService, profileName); err != nil && err != keychain.ErrorItemNotFound {
-		return fmt.Errorf("clearing existing keychain item for %q: %w", profileName, err)
+	// Try an in place update first, since that's a single atomic
+	// SecItemUpdate call: at every point in time the item either still holds
+	// the old value or already holds the new one, never neither. A
+	// delete-then-add would leave a real gap where the profile has no
+	// stored secret at all if the process died or another Set raced in
+	// between the two calls, and that gap is exactly what this tool exists
+	// to avoid.
+	query := keychain.NewItem()
+	query.SetSecClass(keychain.SecClassGenericPassword)
+	query.SetService(keychainService)
+	query.SetAccount(profileName)
+
+	update := keychain.NewItem()
+	update.SetData([]byte(value))
+	update.SetLabel("sanctum: " + profileName)
+	update.SetAccessible(keychain.AccessibleWhenUnlockedThisDeviceOnly)
+	update.SetSynchronizable(keychain.SynchronizableNo)
+
+	err := keychain.UpdateItem(query, update)
+	if err == nil {
+		return nil
+	}
+	if err != keychain.ErrorItemNotFound {
+		return fmt.Errorf("updating keychain item for %q: %w", profileName, err)
 	}
 
+	// Nothing to update yet, this is the first time this profile's secret
+	// is being set.
 	item := keychain.NewGenericPassword(keychainService, profileName, "sanctum: "+profileName, []byte(value), "")
 	item.SetAccessible(keychain.AccessibleWhenUnlockedThisDeviceOnly)
 	item.SetSynchronizable(keychain.SynchronizableNo)
