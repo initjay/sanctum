@@ -48,6 +48,7 @@ func newRootCmdWithDeps(getDeps depsFunc) *cobra.Command {
 	root.AddCommand(newEnvCmd(getDeps))
 	root.AddCommand(newShellCmd(getDeps))
 	root.AddCommand(newProfileCmd(getDeps))
+	root.AddCommand(newStatusCmd(getDeps))
 
 	return root
 }
