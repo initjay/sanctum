@@ -92,7 +92,20 @@ func newProfileEditCmd(getDeps depsFunc) *cobra.Command {
 				}
 			}
 
-			if rotateCredential || typeChanged {
+			needsRotation := rotateCredential || typeChanged
+			var previousSecret string
+			var hadPreviousSecret bool
+
+			if needsRotation {
+				// Captured so a failed profiles.json write below can put
+				// the keychain back the way it was, rather than leaving
+				// the secret rotated while the profile still records the
+				// old credential type, or vice versa.
+				if v, err := d.secrets.Get(name); err == nil {
+					previousSecret = v
+					hadPreviousSecret = true
+				}
+
 				p := newPrompter(cmd)
 				secretValue, err := resolveSecret(cmd, p, credType, updated.ConfigDir, apiKeyStdin)
 				if err != nil {
@@ -106,6 +119,15 @@ func newProfileEditCmd(getDeps depsFunc) *cobra.Command {
 			updated.UpdatedAt = time.Now().UTC()
 
 			if err := d.profiles.Update(updated); err != nil {
+				if needsRotation {
+					if !hadPreviousSecret {
+						return fmt.Errorf("updating the profile failed after the secret had already been rotated, and there was no previous secret to restore, run \"profile edit --rotate-credential\" again once this is fixed: %w", err)
+					}
+					if rbErr := d.secrets.Set(name, previousSecret); rbErr != nil {
+						return fmt.Errorf("updating the profile failed (%v), and rolling back the credential rotation also failed (%v): the keychain secret for %q may no longer match its recorded credential type, run \"profile edit --rotate-credential\" again to fix it", err, rbErr, name)
+					}
+					return fmt.Errorf("updating the profile failed, rolled the keychain back to its previous secret: %w", err)
+				}
 				return err
 			}
 

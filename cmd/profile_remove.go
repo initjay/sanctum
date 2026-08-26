@@ -44,15 +44,28 @@ func newProfileRemoveCmd(getDeps depsFunc) *cobra.Command {
 				}
 			}
 
-			if err := d.secrets.Delete(name); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove the keychain item for %q: %v\n", name, err)
-			}
+			// secret.Store.Delete already treats "there was nothing to
+			// delete" as success, so any error here is a genuine failure
+			// (a locked keychain, a denied access prompt), never just a
+			// missing item. The profile metadata is still removed either
+			// way, so a repeatedly failing keychain delete can never
+			// leave behind a ghost profile with no way to remove it, but
+			// that failure has to make the command exit non-zero, not
+			// just print a warning, or a script checking the exit code
+			// would have no way to notice the secret might still be
+			// sitting in the keychain.
+			secretErr := d.secrets.Delete(name)
 
 			if err := d.profiles.Remove(name); err != nil {
 				return err
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed profile %q. Its config dir at %s was left in place.\n", name, p.ConfigDir)
+
+			if secretErr != nil {
+				return fmt.Errorf("the profile was removed, but its keychain secret could not be deleted and may still be present: %w", secretErr)
+			}
+
 			return nil
 		},
 	}

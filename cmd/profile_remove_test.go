@@ -108,7 +108,7 @@ func TestProfileRemoveUnknownProfileReturnsError(t *testing.T) {
 	}
 }
 
-func TestProfileRemoveWarnsButSucceedsWhenSecretDeleteFails(t *testing.T) {
+func TestProfileRemoveStillRemovesMetadataButFailsWhenSecretDeleteFails(t *testing.T) {
 	store := newProfileTestStore(t)
 	if err := store.Add(profile.Profile{
 		Name:           "work-acme",
@@ -129,12 +129,18 @@ func TestProfileRemoveWarnsButSucceedsWhenSecretDeleteFails(t *testing.T) {
 	root.SetErr(&errOut)
 	root.SetArgs([]string{"profile", "remove", "work-acme", "--yes"})
 
-	if err := root.Execute(); err != nil {
-		t.Fatalf("Execute: %v", err)
+	// A real keychain delete failure (not just "already missing", which
+	// secret.Store.Delete already treats as success on its own) has to
+	// make the command exit non-zero, so a script checking the exit code
+	// can tell the secret might still be sitting in the keychain, even
+	// though the profile metadata is still removed either way so it can
+	// never turn into an unremovable ghost profile.
+	if err := root.Execute(); err == nil {
+		t.Fatalf("expected a non-zero exit when the keychain delete genuinely fails")
 	}
 
-	if !strings.Contains(errOut.String(), "warning") {
-		t.Errorf("expected a warning on stderr about the failed keychain delete, got %q", errOut.String())
+	if !strings.Contains(out.String(), "Removed profile") {
+		t.Errorf("expected the profile removal to still be reported as done, got stdout %q", out.String())
 	}
 
 	if _, err := store.Get("work-acme"); err != profile.ErrNotFound {
