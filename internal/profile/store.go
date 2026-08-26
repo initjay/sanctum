@@ -19,6 +19,15 @@ var ErrAlreadyExists = errors.New("profile already exists")
 // ErrInvalidName is returned when a profile name fails ValidName.
 var ErrInvalidName = errors.New("invalid profile name")
 
+// ErrInvalidCredentialType is returned when a profile's CredentialType
+// isn't one of the known constants.
+var ErrInvalidCredentialType = errors.New("invalid credential type")
+
+// ErrInvalidConfigDir is returned when a profile has no config dir set. An
+// empty CLAUDE_CONFIG_DIR would let Claude Code silently fall back to the
+// user's default ~/.claude, defeating isolation instead of failing loudly.
+var ErrInvalidConfigDir = errors.New("config dir must not be empty")
+
 var nameRE = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // ValidName reports whether name is an acceptable profile name.
@@ -171,11 +180,33 @@ func (s *Store) Get(name string) (Profile, error) {
 	return Profile{}, ErrNotFound
 }
 
-// Add appends a new profile. It fails with ErrInvalidName if the name isn't
-// acceptable, or ErrAlreadyExists if the name is already taken.
-func (s *Store) Add(p Profile) error {
+// validate checks the fields of a Profile that every write path needs to
+// enforce, regardless of whether it's a new profile or an edit. A profile
+// that fails this can never reach disk, which matters beyond mere data
+// hygiene: hygiene.go's env resolution trusts CredentialType and ConfigDir
+// to be well formed, and a profile that slipped through with an invalid
+// CredentialType would leave both possible credential env vars unset,
+// silently letting whatever was already in the parent shell's environment
+// leak through untouched.
+func validate(p Profile) error {
 	if !ValidName(p.Name) {
 		return fmt.Errorf("%w: %q", ErrInvalidName, p.Name)
+	}
+	if !p.CredentialType.Valid() {
+		return fmt.Errorf("%w: %q", ErrInvalidCredentialType, p.CredentialType)
+	}
+	if p.ConfigDir == "" {
+		return ErrInvalidConfigDir
+	}
+	return nil
+}
+
+// Add appends a new profile. It fails with ErrInvalidName,
+// ErrInvalidCredentialType, or ErrInvalidConfigDir if the profile isn't
+// well formed, or ErrAlreadyExists if the name is already taken.
+func (s *Store) Add(p Profile) error {
+	if err := validate(p); err != nil {
+		return err
 	}
 
 	return s.withLock(func(profiles []Profile) ([]Profile, error) {
@@ -189,11 +220,11 @@ func (s *Store) Add(p Profile) error {
 }
 
 // Update replaces the profile with the given name. It fails with
-// ErrInvalidName if the name isn't acceptable, or ErrNotFound if no such
-// profile exists.
+// ErrInvalidName, ErrInvalidCredentialType, or ErrInvalidConfigDir if the
+// profile isn't well formed, or ErrNotFound if no such profile exists.
 func (s *Store) Update(p Profile) error {
-	if !ValidName(p.Name) {
-		return fmt.Errorf("%w: %q", ErrInvalidName, p.Name)
+	if err := validate(p); err != nil {
+		return err
 	}
 
 	return s.withLock(func(profiles []Profile) ([]Profile, error) {
