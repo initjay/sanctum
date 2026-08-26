@@ -226,6 +226,19 @@ func resolveConfigDir(p *prompter, flagValue, name string, reuse, nonInteractive
 		configDir = filepath.Join(homesDir, name)
 	}
 
+	// Normalize to an absolute, cleaned path before it's used anywhere
+	// else: stored in the profile, compared against other profiles'
+	// config dirs, or chmod'd. Without this, two different spellings of
+	// the same directory (a trailing slash, a relative path resolved
+	// against whatever the working directory happened to be) could look
+	// like different paths to checkConfigDirNotClaimed's string
+	// comparison and silently defeat it.
+	absConfigDir, err := filepath.Abs(configDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", configDir, err)
+	}
+	configDir = absConfigDir
+
 	entries, statErr := os.ReadDir(configDir)
 	switch {
 	case os.IsNotExist(statErr):

@@ -300,6 +300,27 @@ func TestProfileAddRejectsConfigDirAlreadyUsedByAnotherProfile(t *testing.T) {
 	}
 }
 
+// TestProfileAddRejectsConfigDirAlreadyUsedByAnotherProfileWithTrailingSlash
+// guards a normalization gap found during review: without normalizing to
+// an absolute, cleaned path, spelling an already claimed directory with a
+// trailing slash was enough to slip past checkConfigDirNotClaimed's plain
+// string comparison.
+func TestProfileAddRejectsConfigDirAlreadyUsedByAnotherProfileWithTrailingSlash(t *testing.T) {
+	sharedDir := t.TempDir()
+	getDeps := fakeDeps(t, []profile.Profile{
+		{Name: "existing", CredentialType: profile.CredentialAPIKey, ConfigDir: sharedDir},
+	}, map[string]string{"existing": "sk-existing-value-1234567890"})
+
+	_, _, err := runAdd(t, getDeps, []string{
+		"new-profile", "--non-interactive", "--credential-type", "api-key",
+		"--api-key-stdin", "--config-dir", sharedDir + string(os.PathSeparator), "--reuse-config-dir",
+	}, "sk-new-value-1234567890\n")
+
+	if err == nil {
+		t.Fatalf("expected an error even when the claimed dir is spelled with a trailing slash")
+	}
+}
+
 func TestProfileAddTightensPermissionsOnReusedConfigDir(t *testing.T) {
 	getDeps := fakeDeps(t, nil, nil)
 	configDir := t.TempDir()
