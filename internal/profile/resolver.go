@@ -47,10 +47,27 @@ func ResolveProfile(store *Store, secrets secret.Store, name string) (ResolvedEn
 		return ResolvedEnv{}, err
 	}
 
+	vars := BuildEnv(p, value)
+	unsetVars := BuildUnsetList(p)
+
+	// BuildEnv and BuildUnsetList are meant to be disjoint: nothing should
+	// ever appear in both. That's what lets sanctum env and sanctum shell
+	// agree on the result even though they apply Vars/UnsetVars in
+	// different orders internally (env prints exports then unsets, shell
+	// drops-then-overlays). If that invariant ever broke, the two commands
+	// would silently produce different environments for the same profile.
+	// Refusing to resolve at all is safer than letting them quietly
+	// diverge.
+	for _, unsetName := range unsetVars {
+		if _, ok := vars[unsetName]; ok {
+			return ResolvedEnv{}, fmt.Errorf("internal error: profile %q would both set and unset %s", p.Name, unsetName)
+		}
+	}
+
 	return ResolvedEnv{
 		ProfileName: p.Name,
 		ConfigDir:   p.ConfigDir,
-		Vars:        BuildEnv(p, value),
-		UnsetVars:   BuildUnsetList(p),
+		Vars:        vars,
+		UnsetVars:   unsetVars,
 	}, nil
 }

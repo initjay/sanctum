@@ -98,6 +98,34 @@ func TestBuildUnsetListExcludesActiveCredentialVar(t *testing.T) {
 	}
 }
 
+// TestBuildEnvAndBuildUnsetListAreDisjoint guards the invariant
+// ResolveProfile depends on: a name must never appear in both BuildEnv's
+// output and BuildUnsetList's output for the same profile. sanctum env and
+// sanctum shell apply Vars/UnsetVars in different internal orders, so if
+// this ever broke, the two commands would silently disagree about the
+// resulting environment for the same profile.
+func TestBuildEnvAndBuildUnsetListAreDisjoint(t *testing.T) {
+	profiles := []Profile{
+		{Name: "a", CredentialType: CredentialAPIKey},
+		{Name: "b", CredentialType: CredentialOAuthToken},
+		{Name: "c", CredentialType: "not-a-real-type"},
+		{Name: "d", CredentialType: CredentialAPIKey, BaseURL: "https://gateway.example.com"},
+		{Name: "e", CredentialType: CredentialOAuthToken, DefaultModel: "claude-sonnet-5"},
+		{Name: "f", CredentialType: CredentialAPIKey, BaseURL: "https://gateway.example.com", DefaultModel: "claude-sonnet-5"},
+	}
+
+	for _, p := range profiles {
+		vars := BuildEnv(p, "secret-value")
+		unset := BuildUnsetList(p)
+
+		for _, name := range unset {
+			if _, ok := vars[name]; ok {
+				t.Errorf("profile %q: %s appears in both BuildEnv and BuildUnsetList", p.Name, name)
+			}
+		}
+	}
+}
+
 func TestBuildUnsetListUnsetsBothCredentialVarsForUnrecognizedType(t *testing.T) {
 	// Store.Add/Update reject this before it ever reaches disk, and
 	// ResolveProfile refuses to resolve a profile like this, but
