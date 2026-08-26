@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,6 +9,18 @@ import (
 	"github.com/initjay/sanctum/internal/profile"
 	"github.com/initjay/sanctum/internal/secret"
 )
+
+// errWriteFailed is a stand-in for a real Keychain/store failure in tests
+// that need Set to fail deliberately.
+var errWriteFailed = errors.New("write failed")
+
+// newProfileTestStore returns a temp file backed profile.Store, for tests
+// that need direct access to the same store instance wired into deps
+// (e.g. to assert on rollback behavior after a simulated failure).
+func newProfileTestStore(t *testing.T) *profile.Store {
+	t.Helper()
+	return profile.NewStore(filepath.Join(t.TempDir(), "profiles.json"))
+}
 
 // fakeDeps seeds a temp file backed profile.Store and an in-memory
 // secret.Store, and returns a depsFunc wired to them, so command tests
