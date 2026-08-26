@@ -75,6 +75,10 @@ func newProfileAddCmd(getDeps depsFunc) *cobra.Command {
 				return err
 			}
 
+			if err := checkConfigDirNotClaimed(d.profiles, configDir); err != nil {
+				return err
+			}
+
 			secretValue, err := resolveSecret(cmd, p, credType, configDir, apiKeyStdin)
 			if err != nil {
 				return err
@@ -116,8 +120,12 @@ func newProfileAddCmd(getDeps depsFunc) *cobra.Command {
 				// Roll back the profile metadata we just wrote, so a
 				// failed secret save never leaves behind a profile with
 				// no secret and no way to fix it until profile edit or
-				// remove exist.
-				_ = d.profiles.Remove(name)
+				// remove exist. If the rollback itself fails too, that
+				// has to be surfaced explicitly rather than swallowed,
+				// since it's the only sign the profile is still there.
+				if rmErr := d.profiles.Remove(name); rmErr != nil {
+					return fmt.Errorf("saving the secret to the keychain failed (%v), and rolling back the newly created profile also failed (%v): remove %q by hand from %s", err, rmErr, name, d.profiles.Path())
+				}
 				return fmt.Errorf("saving the secret to the keychain: %w", err)
 			}
 
@@ -151,12 +159,22 @@ func newPrompter(cmd *cobra.Command) *prompter {
 	return &prompter{in: bufio.NewReader(cmd.InOrStdin()), out: cmd.OutOrStdout()}
 }
 
+// line reads one answer. Reaching end of input without ever seeing a
+// newline is only treated as a real answer if some text was actually read
+// (the last line in a stream with no trailing newline); a bare EOF with no
+// text is returned as an error rather than coerced into an empty answer,
+// since silently treating "no more input" as "the user pressed enter" is
+// what let an unattended run with too little piped input spin forever
+// retrying a prompt that could never be satisfied.
 func (p *prompter) line(prompt string) (string, error) {
 	fmt.Fprint(p.out, prompt)
 
 	text, err := p.in.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
+	if err != nil {
+		if err == io.EOF && text != "" {
+			return strings.TrimSpace(text), nil
+		}
+		return "", fmt.Errorf("reading input: %w", err)
 	}
 
 	return strings.TrimSpace(text), nil
@@ -214,6 +232,7 @@ func resolveConfigDir(p *prompter, flagValue, name string, reuse, nonInteractive
 		if err := os.MkdirAll(configDir, 0o700); err != nil {
 			return "", fmt.Errorf("creating %s: %w", configDir, err)
 		}
+		return configDir, nil
 	case statErr != nil:
 		return "", statErr
 	case len(entries) > 0 && !reuse:
@@ -230,13 +249,44 @@ func resolveConfigDir(p *prompter, flagValue, name string, reuse, nonInteractive
 		}
 	}
 
+	// Reusing an existing directory, either because it was already empty
+	// or because --reuse-config-dir/the prompt above allowed it. Tighten
+	// its permissions regardless of how it got here: a directory sanctum
+	// didn't create itself might have been left looser by something else,
+	// and CLAUDE_CONFIG_DIR can hold Claude Code's own settings and
+	// session history, which this tool exists to keep isolated.
+	if err := os.Chmod(configDir, 0o700); err != nil {
+		return "", fmt.Errorf("tightening permissions on %s: %w", configDir, err)
+	}
+
 	return configDir, nil
+}
+
+// checkConfigDirNotClaimed refuses to let a new profile point at a config
+// dir another profile already owns. Two profiles sharing one
+// CLAUDE_CONFIG_DIR would share settings and session history between them,
+// silently defeating the isolation this tool exists to provide, so this
+// is checked regardless of --reuse-config-dir, which is about tolerating
+// a non-empty directory, not about sharing one between profiles.
+func checkConfigDirNotClaimed(store *profile.Store, configDir string) error {
+	profiles, err := store.Load()
+	if err != nil {
+		return err
+	}
+
+	for _, existing := range profiles {
+		if existing.ConfigDir == configDir {
+			return fmt.Errorf("config dir %s is already used by profile %q, each profile needs its own isolated config dir", configDir, existing.Name)
+		}
+	}
+
+	return nil
 }
 
 func resolveSecret(cmd *cobra.Command, p *prompter, credType profile.CredentialType, configDir string, apiKeyStdin bool) (string, error) {
 	switch credType {
 	case profile.CredentialAPIKey:
-		return readSecretValue(p, apiKeyStdin, "API key")
+		return readSecretValue(cmd, p, apiKeyStdin, "API key")
 	case profile.CredentialOAuthToken:
 		return runSetupToken(cmd, p, configDir)
 	default:
@@ -244,13 +294,31 @@ func resolveSecret(cmd *cobra.Command, p *prompter, credType profile.CredentialT
 	}
 }
 
+// isRealTerminalStdin reports whether cmd's stdin is genuinely the
+// process's real os.Stdin, and that fd is an actual terminal. Checking
+// only term.IsTerminal(os.Stdin.Fd()) isn't enough: cobra's SetIn (used by
+// every test in this package) swaps out what cmd.InOrStdin() returns, but
+// doesn't and can't change the real os.Stdin fd, so a bare TTY check would
+// still see whatever's attached to fd 0 for the process actually running
+// the tests, a real terminal or not, regardless of the fake stdin a test
+// wired up. Requiring cmd.InOrStdin() to literally be os.Stdin closes that
+// gap: masked/raw-fd input paths are only ever taken when nothing has
+// substituted stdin.
+func isRealTerminalStdin(cmd *cobra.Command) bool {
+	in, ok := cmd.InOrStdin().(*os.File)
+	if !ok || in != os.Stdin {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
 // readSecretValue prompts for a secret, masking the input when stdin is a
 // real terminal and reading a plain line otherwise, which is also what
 // makes --api-key-stdin and piped/test input work: whenever forceStdin is
-// set or stdin isn't a terminal, this always takes the same plain-line
-// path a test can drive without needing a real TTY.
-func readSecretValue(p *prompter, forceStdin bool, label string) (string, error) {
-	if !forceStdin && term.IsTerminal(int(os.Stdin.Fd())) {
+// set or stdin isn't a real terminal, this always takes the same
+// plain-line path a test can drive without needing a real TTY.
+func readSecretValue(cmd *cobra.Command, p *prompter, forceStdin bool, label string) (string, error) {
+	if !forceStdin && isRealTerminalStdin(cmd) {
 		fmt.Fprintf(p.out, "%s (input hidden): ", label)
 		raw, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(p.out)
@@ -284,10 +352,24 @@ func runSetupToken(cmd *cobra.Command, p *prompter, configDir string) (string, e
 		return "", err
 	}
 
+	// parseToken is a best effort heuristic that's never been verified
+	// against a real run, so a non-empty result is a candidate, not a
+	// certainty, until a human confirms it. Trusting it outright risked
+	// silently writing the wrong value, e.g. a URL fragment that happened
+	// to look token shaped, to the keychain as the profile's credential.
 	if result.Token != "" {
-		return result.Token, nil
+		fmt.Fprintf(p.out, "Detected a possible token in the output above: %s\n", maskSecret(result.Token))
+		answer, err := p.line("Does that look right? [Y/n]: ")
+		if err != nil {
+			return "", err
+		}
+		if answer == "" || strings.EqualFold(answer, "y") {
+			return result.Token, nil
+		}
+	} else {
+		fmt.Fprintln(p.out, "Could not automatically find the token in that output.")
 	}
 
-	fmt.Fprintln(p.out, "Could not automatically find the token in that output, paste it manually below.")
-	return readSecretValue(p, false, "OAuth token")
+	fmt.Fprintln(p.out, "Paste the token manually below instead.")
+	return readSecretValue(cmd, p, false, "OAuth token")
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 // Result is the outcome of running claude setup-token.
@@ -83,20 +84,29 @@ func childEnv(configDir string) []string {
 // parseToken makes a best effort attempt to find the generated token in
 // claude setup-token's output. This hasn't been verified against a real
 // run, since producing one requires completing an interactive browser
-// login. It looks for a line containing "token" followed by a colon, on
-// the theory that CLI tools generally print a generated credential in a
-// labeled "Token: <value>" style line. If nothing confidently matches, it
-// returns "", and callers are expected to fall back to asking the user to
-// paste the token by hand rather than trusting an empty result silently.
+// login. It looks for a line shaped like "<label containing the word
+// token>: <value>", on the theory that CLI tools generally print a
+// generated credential in a labeled line like that. Because this is
+// unverified, callers must never trust the result outright: a non-empty
+// return is a candidate for a human to confirm, and an empty one means
+// fall back to asking the user to paste the token by hand.
 func parseToken(output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.Contains(strings.ToLower(line), "token") {
+
+		// Split on the first colon, not the last: using the label (the
+		// part before it) to decide whether this line is even about a
+		// token at all is what lets a line like "Login token URL:
+		// https://example.com/oauth/authorize?scope=..." get rejected
+		// below for looking like a URL, instead of returning everything
+		// after the URL's own "https:" as if it were the token.
+		idx := strings.Index(line, ":")
+		if idx == -1 || idx == len(line)-1 {
 			continue
 		}
 
-		idx := strings.LastIndex(line, ":")
-		if idx == -1 || idx == len(line)-1 {
+		label := strings.ToLower(line[:idx])
+		if !containsWord(label, "token") {
 			continue
 		}
 
@@ -104,9 +114,27 @@ func parseToken(output string) string {
 		if value == "" || strings.ContainsAny(value, " \t") || len(value) < 20 {
 			continue
 		}
+		if strings.Contains(value, "://") || strings.Contains(value, "/") || strings.HasPrefix(strings.ToLower(value), "http") {
+			continue
+		}
 
 		return value
 	}
 
 	return ""
+}
+
+// containsWord reports whether word appears in s as a standalone word
+// rather than as a substring of a larger word, so a label like
+// "tokenizer" doesn't count but "login token url" does.
+func containsWord(s, word string) bool {
+	for _, field := range strings.FieldsFunc(s, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if field == word {
+			return true
+		}
+	}
+
+	return false
 }

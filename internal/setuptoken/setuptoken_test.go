@@ -29,6 +29,37 @@ func TestParseTokenReturnsEmptyWhenNothingMatches(t *testing.T) {
 	}
 }
 
+// TestParseTokenDoesNotMistakeALoginURLForTheToken reproduces a false
+// positive found during review: a line whose label happens to contain the
+// word "token" but whose value is actually a URL (a very plausible real
+// line from an OAuth login flow) must not be returned as the token.
+func TestParseTokenDoesNotMistakeALoginURLForTheToken(t *testing.T) {
+	output := "Login token URL: https://console.anthropic.com/oauth/authorize?scope=abcdefghijklmnop\n"
+
+	if got := parseToken(output); got != "" {
+		t.Errorf("expected the URL to be rejected, got %q", got)
+	}
+}
+
+func TestParseTokenStillFindsRealTokenAfterAURLLine(t *testing.T) {
+	output := "Login token URL: https://console.anthropic.com/oauth/authorize?scope=abcdefghijklmnop\n" +
+		"Token: abcdefghijklmnopqrstuvwxyz\n"
+
+	if got := parseToken(output); got != "abcdefghijklmnopqrstuvwxyz" {
+		t.Errorf("got %q, want abcdefghijklmnopqrstuvwxyz", got)
+	}
+}
+
+func TestParseTokenRequiresTokenAsAWholeWordInTheLabel(t *testing.T) {
+	// "tokenizer" contains "token" as a substring but isn't the word
+	// "token", this must not match.
+	output := "Tokenizer version: abcdefghijklmnopqrstuvwxyz\n"
+
+	if got := parseToken(output); got != "" {
+		t.Errorf("expected no match for a label that only contains token as a substring, got %q", got)
+	}
+}
+
 func TestParseTokenIgnoresShortOrSpacedValues(t *testing.T) {
 	output := "Token: short\nAuth token: has a space in it\n"
 

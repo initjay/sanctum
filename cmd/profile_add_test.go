@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/initjay/sanctum/internal/profile"
 )
@@ -152,6 +153,7 @@ func TestProfileAddRejectsEmptySecret(t *testing.T) {
 
 	_, _, err := runAdd(t, getDeps, []string{
 		"work-acme", "--non-interactive", "--credential-type", "api-key", "--api-key-stdin",
+		"--config-dir", filepath.Join(t.TempDir(), "work-acme"),
 	}, "\n")
 
 	if err == nil {
@@ -254,5 +256,103 @@ func TestProfileAddInteractivePromptsForEverything(t *testing.T) {
 	}
 	if p.Label != "My personal account" || p.CredentialType != profile.CredentialAPIKey {
 		t.Errorf("unexpected profile: %+v", p)
+	}
+}
+
+// TestProfileAddStdinEOFDoesNotSpinForever reproduces a bug found during
+// review: if stdin ran out before the credential type prompt got a valid
+// "1" or "2" answer, the retry loop treated end of input the same as an
+// empty answer and looped forever without ever blocking, pinning a CPU
+// core. Running this off the main goroutine with a timeout is what makes
+// a regression here fail the test instead of hanging it.
+func TestProfileAddStdinEOFDoesNotSpinForever(t *testing.T) {
+	getDeps := fakeDeps(t, nil, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := runAdd(t, getDeps, []string{"spintest", "--config-dir", t.TempDir()}, "somelabel\n")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("expected an error when stdin runs out before a credential type is chosen")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile add spun forever instead of erroring out on stdin EOF")
+	}
+}
+
+func TestProfileAddRejectsConfigDirAlreadyUsedByAnotherProfile(t *testing.T) {
+	sharedDir := t.TempDir()
+	getDeps := fakeDeps(t, []profile.Profile{
+		{Name: "existing", CredentialType: profile.CredentialAPIKey, ConfigDir: sharedDir},
+	}, map[string]string{"existing": "sk-existing-value-1234567890"})
+
+	_, _, err := runAdd(t, getDeps, []string{
+		"new-profile", "--non-interactive", "--credential-type", "api-key",
+		"--api-key-stdin", "--config-dir", sharedDir, "--reuse-config-dir",
+	}, "sk-new-value-1234567890\n")
+
+	if err == nil {
+		t.Fatalf("expected an error when a config dir is already claimed by another profile")
+	}
+}
+
+func TestProfileAddTightensPermissionsOnReusedConfigDir(t *testing.T) {
+	getDeps := fakeDeps(t, nil, nil)
+	configDir := t.TempDir()
+	if err := os.Chmod(configDir, 0o755); err != nil {
+		t.Fatalf("chmod setup: %v", err)
+	}
+
+	_, _, err := runAdd(t, getDeps, []string{
+		"work-acme", "--non-interactive", "--credential-type", "api-key",
+		"--api-key-stdin", "--config-dir", configDir,
+	}, "sk-value-1234567890\n")
+
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	info, statErr := os.Stat(configDir)
+	if statErr != nil {
+		t.Fatalf("Stat: %v", statErr)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Errorf("expected config dir permissions 0700, got %v", info.Mode().Perm())
+	}
+}
+
+// TestProfileAddSecretPromptDoesNotHangWhenStdinIsSubstituted guards the
+// fix for a real hang found during review: term.IsTerminal/term.ReadPassword
+// used to check the process's real os.Stdin directly, so a test run under
+// an actual pty would block waiting for terminal input the test's fake
+// stdin could never provide, ignoring root.SetIn entirely.
+// isRealTerminalStdin fixes this by requiring cmd.InOrStdin() to literally
+// be os.Stdin before ever treating stdin as a real terminal, which is
+// never true here since SetIn always substitutes it. This deliberately
+// does not pass --api-key-stdin, so readSecretValue actually evaluates
+// isRealTerminalStdin instead of short circuiting past it.
+func TestProfileAddSecretPromptDoesNotHangWhenStdinIsSubstituted(t *testing.T) {
+	getDeps := fakeDeps(t, nil, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := runAdd(t, getDeps, []string{
+			"work-acme", "--non-interactive", "--credential-type", "api-key",
+			"--config-dir", t.TempDir(),
+		}, "sk-value-1234567890\n")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile add hung instead of using the fake stdin")
 	}
 }
