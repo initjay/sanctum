@@ -1,8 +1,10 @@
 package profile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -151,6 +153,59 @@ func TestSaveIsAtomicAndDoesNotLeakTempFiles(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("expected profiles.json mode 0600, got %v", info.Mode().Perm())
+	}
+}
+
+func TestAddRejectsInvalidName(t *testing.T) {
+	s := newTestStore(t)
+	p := sampleProfile("../escape")
+
+	err := s.Add(p)
+	if !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("expected ErrInvalidName, got %v", err)
+	}
+
+	profiles, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("expected nothing written for an invalid name, got %d profiles", len(profiles))
+	}
+}
+
+func TestUpdateRejectsInvalidName(t *testing.T) {
+	s := newTestStore(t)
+
+	err := s.Update(sampleProfile("bad/name"))
+	if !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("expected ErrInvalidName, got %v", err)
+	}
+}
+
+func TestConcurrentAddDoesNotDropProfiles(t *testing.T) {
+	s := newTestStore(t)
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			p := sampleProfile("profile-" + string(rune('a'+i)))
+			if err := s.Add(p); err != nil {
+				t.Errorf("Add: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	profiles, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(profiles) != n {
+		t.Fatalf("expected %d profiles after concurrent adds, got %d", n, len(profiles))
 	}
 }
 
