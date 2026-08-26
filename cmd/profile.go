@@ -10,6 +10,7 @@ func newProfileCmd(getDeps depsFunc) *cobra.Command {
 
 	cmd.AddCommand(newProfileListCmd(getDeps))
 	cmd.AddCommand(newProfileShowCmd(getDeps))
+	cmd.AddCommand(newProfileAddCmd(getDeps))
 
 	return cmd
 }
