@@ -1,0 +1,4 @@
+/sanctum
+/bin/
+*.test
+*.out
