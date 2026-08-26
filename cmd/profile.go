@@ -11,6 +11,8 @@ func newProfileCmd(getDeps depsFunc) *cobra.Command {
 	cmd.AddCommand(newProfileListCmd(getDeps))
 	cmd.AddCommand(newProfileShowCmd(getDeps))
 	cmd.AddCommand(newProfileAddCmd(getDeps))
+	cmd.AddCommand(newProfileEditCmd(getDeps))
+	cmd.AddCommand(newProfileRemoveCmd(getDeps))
 
 	return cmd
 }

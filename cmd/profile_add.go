@@ -75,7 +75,7 @@ func newProfileAddCmd(getDeps depsFunc) *cobra.Command {
 				return err
 			}
 
-			if err := checkConfigDirNotClaimed(d.profiles, configDir); err != nil {
+			if err := checkConfigDirNotClaimed(d.profiles, configDir, ""); err != nil {
 				return err
 			}
 
@@ -275,19 +275,25 @@ func resolveConfigDir(p *prompter, flagValue, name string, reuse, nonInteractive
 	return configDir, nil
 }
 
-// checkConfigDirNotClaimed refuses to let a new profile point at a config
-// dir another profile already owns. Two profiles sharing one
-// CLAUDE_CONFIG_DIR would share settings and session history between them,
-// silently defeating the isolation this tool exists to provide, so this
-// is checked regardless of --reuse-config-dir, which is about tolerating
-// a non-empty directory, not about sharing one between profiles.
-func checkConfigDirNotClaimed(store *profile.Store, configDir string) error {
+// checkConfigDirNotClaimed refuses to let a profile point at a config dir
+// another profile already owns. Two profiles sharing one CLAUDE_CONFIG_DIR
+// would share settings and session history between them, silently
+// defeating the isolation this tool exists to provide, so this is checked
+// regardless of --reuse-config-dir, which is about tolerating a non-empty
+// directory, not about sharing one between profiles. excludeName lets
+// profile edit check a profile against every OTHER profile without
+// tripping over its own existing entry; profile add passes "" since a
+// brand new profile can't collide with itself.
+func checkConfigDirNotClaimed(store *profile.Store, configDir, excludeName string) error {
 	profiles, err := store.Load()
 	if err != nil {
 		return err
 	}
 
 	for _, existing := range profiles {
+		if existing.Name == excludeName {
+			continue
+		}
 		if existing.ConfigDir == configDir {
 			return fmt.Errorf("config dir %s is already used by profile %q, each profile needs its own isolated config dir", configDir, existing.Name)
 		}
