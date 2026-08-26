@@ -42,7 +42,10 @@ A workspace with a saved layout lives inside a `commands` array entry (or
 an `actions` entry), under a `workspace` key, not at the file's top level.
 A surface (one pane/tab) inside that layout supports a `command` field,
 which is the shell command cmux runs the instant that surface is created.
-Here's a two profile example, one pane per account, side by side:
+Here's a two profile example, one pane per account, side by side. This
+assumes `work-acme` and `personal` already exist as sanctum profiles
+(`sanctum profile add <name>`), sanctum shell will just fail with "profile
+not found" for a name that hasn't been created yet:
 
 ```json
 {

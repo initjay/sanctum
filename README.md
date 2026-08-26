@@ -6,7 +6,7 @@ Right now that means one thing concretely: managing multiple Claude Code CLI acc
 
 ## Building
 
-Requires Go 1.22 or newer and Xcode command line tools (for the macOS Keychain bindings).
+Requires Go 1.25 or newer (see `go.mod`) and Xcode command line tools (for the macOS Keychain bindings).
 
 ```
 go build -o sanctum .
@@ -30,6 +30,6 @@ sanctum status                       # show which profile, if any, is active in 
 
 `sanctum shell` is the one meant to be wired into a terminal pane's startup command, so the pane boots directly into a scoped shell. See `docs/cmux-integration.md` for wiring it into [cmux](https://github.com/manaflow-ai/cmux) specifically.
 
-`sanctum profile add --credential-type oauth` runs `claude setup-token` for you, scoped to the new profile's isolated config dir, so a subscription based account can be isolated without ever touching the shared system Keychain login Claude Code otherwise uses.
+`sanctum profile add <name> --credential-type oauth` runs `claude setup-token` for you, scoped to the new profile's isolated config dir, so a subscription based account can be isolated without ever touching the shared system Keychain login Claude Code otherwise uses.
 
 See `docs/verification-checklist.md` for what's been tested and what still needs a manual pass.
