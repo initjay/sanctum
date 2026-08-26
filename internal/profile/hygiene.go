@@ -33,7 +33,12 @@ var isolationSensitiveVars = []string{
 }
 
 // BuildEnv returns the env vars a session scoped to p should have set,
-// given the profile's resolved secret value.
+// given the profile's resolved secret value. Its output must always be
+// applied together with BuildUnsetList's output for the same profile, never
+// on its own: an unrecognized CredentialType makes BuildEnv silently set
+// neither credential var, which is only safe because BuildUnsetList's
+// default case unsets both in that same situation. Applying Vars without
+// also applying UnsetVars reopens that gap.
 func BuildEnv(p Profile, secretValue string) map[string]string {
 	vars := map[string]string{
 		EnvClaudeConfigDir: p.ConfigDir,

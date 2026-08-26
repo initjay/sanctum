@@ -27,14 +27,19 @@ func ResolveProfile(store *Store, secrets secret.Store, name string) (ResolvedEn
 		return ResolvedEnv{}, err
 	}
 
-	// Store.Add/Update reject this today, but a hand edited profiles.json
-	// or a profile written by some future, older, or buggy version of
-	// sanctum could still land an invalid CredentialType on disk. Refusing
-	// to resolve it is the only safe move: silently proceeding would leave
-	// both possible credential env vars untouched, letting whatever the
-	// parent shell already had leak straight through.
+	// Store.Add/Update reject both of these today, but a hand edited
+	// profiles.json or a profile written by some future, older, or buggy
+	// version of sanctum could still land invalid data on disk. Refusing to
+	// resolve it is the only safe move: an invalid CredentialType would
+	// leave both possible credential env vars untouched, and an empty
+	// ConfigDir would resolve to CLAUDE_CONFIG_DIR="", letting Claude Code
+	// silently fall back to its default ~/.claude, either of which
+	// defeats isolation instead of failing loudly.
 	if !p.CredentialType.Valid() {
 		return ResolvedEnv{}, fmt.Errorf("profile %q has an invalid credential type %q", p.Name, p.CredentialType)
+	}
+	if p.ConfigDir == "" {
+		return ResolvedEnv{}, fmt.Errorf("profile %q has no config dir set", p.Name)
 	}
 
 	value, err := secrets.Get(name)

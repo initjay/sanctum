@@ -68,6 +68,24 @@ func TestResolveProfileRejectsInvalidCredentialTypeOnDisk(t *testing.T) {
 	}
 }
 
+func TestResolveProfileRejectsEmptyConfigDirOnDisk(t *testing.T) {
+	// Same bypass as the invalid-credential-type case above: Store.Add
+	// can't produce this, so simulate corrupted/hand-edited data by
+	// writing profiles.json directly.
+	store, secrets := newResolverFixtures(t)
+	raw := `{"version":1,"profiles":[{"name":"no-dir","credential_type":"api_key","config_dir":""}]}`
+	if err := os.WriteFile(store.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatalf("writing corrupted profiles.json: %v", err)
+	}
+	if err := secrets.Set("no-dir", "sk-should-not-be-used"); err != nil {
+		t.Fatalf("Set secret: %v", err)
+	}
+
+	if _, err := ResolveProfile(store, secrets, "no-dir"); err == nil {
+		t.Fatalf("expected an error resolving a profile with an empty config dir, got nil")
+	}
+}
+
 func TestResolveProfileUnknownName(t *testing.T) {
 	store, secrets := newResolverFixtures(t)
 
