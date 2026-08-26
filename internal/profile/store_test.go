@@ -156,6 +156,39 @@ func TestSaveIsAtomicAndDoesNotLeakTempFiles(t *testing.T) {
 	}
 }
 
+func TestAddRejectsInvalidCredentialType(t *testing.T) {
+	s := newTestStore(t)
+	p := sampleProfile("bad-type")
+	p.CredentialType = "not-a-real-type"
+
+	err := s.Add(p)
+	if !errors.Is(err, ErrInvalidCredentialType) {
+		t.Fatalf("expected ErrInvalidCredentialType, got %v", err)
+	}
+}
+
+func TestAddRejectsEmptyConfigDir(t *testing.T) {
+	s := newTestStore(t)
+	p := sampleProfile("no-config-dir")
+	p.ConfigDir = ""
+
+	err := s.Add(p)
+	if !errors.Is(err, ErrInvalidConfigDir) {
+		t.Fatalf("expected ErrInvalidConfigDir, got %v", err)
+	}
+}
+
+func TestUpdateRejectsInvalidCredentialType(t *testing.T) {
+	s := newTestStore(t)
+	p := sampleProfile("bad-type")
+	p.CredentialType = "not-a-real-type"
+
+	err := s.Update(p)
+	if !errors.Is(err, ErrInvalidCredentialType) {
+		t.Fatalf("expected ErrInvalidCredentialType, got %v", err)
+	}
+}
+
 func TestAddRejectsInvalidName(t *testing.T) {
 	s := newTestStore(t)
 	p := sampleProfile("../escape")

@@ -98,6 +98,22 @@ func TestBuildUnsetListExcludesActiveCredentialVar(t *testing.T) {
 	}
 }
 
+func TestBuildUnsetListUnsetsBothCredentialVarsForUnrecognizedType(t *testing.T) {
+	// Store.Add/Update reject this before it ever reaches disk, and
+	// ResolveProfile refuses to resolve a profile like this, but
+	// BuildUnsetList needs to fail closed on its own too, since it's the
+	// actual function deciding what leaks from the ambient environment.
+	p := Profile{Name: "corrupted", CredentialType: "not-a-real-type"}
+	unset := BuildUnsetList(p)
+
+	if !contains(unset, EnvAnthropicAPIKey) {
+		t.Errorf("expected ANTHROPIC_API_KEY in the unset list for an unrecognized credential type")
+	}
+	if !contains(unset, EnvClaudeOAuthToken) {
+		t.Errorf("expected CLAUDE_CODE_OAUTH_TOKEN in the unset list for an unrecognized credential type")
+	}
+}
+
 func TestBuildUnsetListAlwaysIncludesSensitiveVars(t *testing.T) {
 	p := Profile{Name: "a", CredentialType: CredentialAPIKey}
 	unset := BuildUnsetList(p)

@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -46,6 +47,24 @@ func TestResolveProfileAPIKey(t *testing.T) {
 	}
 	if !contains(resolved.UnsetVars, EnvClaudeOAuthToken) {
 		t.Errorf("expected oauth token var in unset list")
+	}
+}
+
+func TestResolveProfileRejectsInvalidCredentialTypeOnDisk(t *testing.T) {
+	// Store.Add/Update can't produce this, so simulate a hand edited or
+	// corrupted profiles.json by writing the file directly, bypassing the
+	// store's own validation entirely.
+	store, secrets := newResolverFixtures(t)
+	raw := `{"version":1,"profiles":[{"name":"corrupted","credential_type":"not-a-real-type","config_dir":"/home/corrupted"}]}`
+	if err := os.WriteFile(store.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatalf("writing corrupted profiles.json: %v", err)
+	}
+	if err := secrets.Set("corrupted", "sk-should-not-be-used"); err != nil {
+		t.Fatalf("Set secret: %v", err)
+	}
+
+	if _, err := ResolveProfile(store, secrets, "corrupted"); err == nil {
+		t.Fatalf("expected an error resolving a profile with an invalid credential type, got nil")
 	}
 }
 

@@ -74,11 +74,20 @@ func BuildUnsetList(p Profile) []string {
 	// Whichever credential var this profile isn't using must still be
 	// unset, since Claude Code checks both and an inactive one, if left
 	// over from the parent shell, could still outrank the one sanctum sets.
+	// Store.Add/Update reject an unrecognized CredentialType before it ever
+	// reaches disk, and ResolveProfile refuses to resolve one that slips
+	// through anyway, but this default exists as a last line of defense
+	// for any other caller of BuildUnsetList directly: an unrecognized
+	// type unsets BOTH credential vars rather than neither, so a bad
+	// CredentialType can only ever fail closed, never leak an ambient
+	// credential through untouched.
 	switch p.CredentialType {
 	case CredentialAPIKey:
 		unset = append(unset, EnvClaudeOAuthToken)
 	case CredentialOAuthToken:
 		unset = append(unset, EnvAnthropicAPIKey)
+	default:
+		unset = append(unset, EnvAnthropicAPIKey, EnvClaudeOAuthToken)
 	}
 
 	if p.BaseURL == "" {
