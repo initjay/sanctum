@@ -43,16 +43,11 @@ func newProfileListCmd(getDeps depsFunc) *cobra.Command {
 
 			entries := make([]profileListEntry, 0, len(profiles))
 			for _, p := range profiles {
-				masked := "(no secret found)"
-				if value, err := d.secrets.Get(p.Name); err == nil {
-					masked = maskSecret(value)
-				}
-
 				entries = append(entries, profileListEntry{
 					Name:           p.Name,
 					Label:          p.Label,
 					CredentialType: string(p.CredentialType),
-					MaskedSecret:   masked,
+					MaskedSecret:   resolveMaskedSecret(d.secrets, p.Name),
 					ConfigDir:      p.ConfigDir,
 					BaseURL:        p.BaseURL,
 				})

@@ -43,18 +43,13 @@ func newProfileShowCmd(getDeps depsFunc) *cobra.Command {
 				return err
 			}
 
-			masked := "(no secret found)"
-			if value, err := d.secrets.Get(p.Name); err == nil {
-				masked = maskSecret(value)
-			}
-
 			_, statErr := os.Stat(p.ConfigDir)
 
 			detail := profileDetail{
 				Name:            p.Name,
 				Label:           p.Label,
 				CredentialType:  string(p.CredentialType),
-				MaskedSecret:    masked,
+				MaskedSecret:    resolveMaskedSecret(d.secrets, p.Name),
 				ConfigDir:       p.ConfigDir,
 				ConfigDirExists: statErr == nil,
 				BaseURL:         p.BaseURL,
