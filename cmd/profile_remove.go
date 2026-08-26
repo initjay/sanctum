@@ -57,6 +57,9 @@ func newProfileRemoveCmd(getDeps depsFunc) *cobra.Command {
 			secretErr := d.secrets.Delete(name)
 
 			if err := d.profiles.Remove(name); err != nil {
+				if secretErr != nil {
+					return fmt.Errorf("removing the profile failed (%v), and its keychain secret could also not be deleted (%v)", err, secretErr)
+				}
 				return err
 			}
 

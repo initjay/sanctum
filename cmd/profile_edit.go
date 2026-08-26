@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/initjay/sanctum/internal/secret"
 )
 
 func newProfileEditCmd(getDeps depsFunc) *cobra.Command {
@@ -100,10 +102,21 @@ func newProfileEditCmd(getDeps depsFunc) *cobra.Command {
 				// Captured so a failed profiles.json write below can put
 				// the keychain back the way it was, rather than leaving
 				// the secret rotated while the profile still records the
-				// old credential type, or vice versa.
-				if v, err := d.secrets.Get(name); err == nil {
+				// old credential type, or vice versa. A real Get failure
+				// here (a locked keychain, say) has to stop the edit
+				// outright rather than being treated the same as "there
+				// was never a secret", which would silently hide an
+				// existing keychain problem behind a confusing rollback
+				// message if the rotation below then also failed.
+				v, err := d.secrets.Get(name)
+				switch {
+				case err == nil:
 					previousSecret = v
 					hadPreviousSecret = true
+				case errors.Is(err, secret.ErrNotFound):
+					hadPreviousSecret = false
+				default:
+					return fmt.Errorf("checking the current secret before rotating it: %w", err)
 				}
 
 				p := newPrompter(cmd)
