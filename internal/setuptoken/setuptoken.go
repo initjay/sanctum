@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -81,17 +82,39 @@ func childEnv(configDir string) []string {
 	return append(env, "CLAUDE_CONFIG_DIR="+configDir)
 }
 
-// parseToken makes a best effort attempt to find the generated token in
-// claude setup-token's output. This hasn't been verified against a real
-// run, since producing one requires completing an interactive browser
-// login. It looks for a line shaped like "<label containing the word
-// token>: <value>", on the theory that CLI tools generally print a
-// generated credential in a labeled line like that. Because this is
-// unverified, callers must never trust the result outright: a non-empty
-// return is a candidate for a human to confirm, and an empty one means
-// fall back to asking the user to paste the token by hand.
+// tokenPattern matches the confirmed real shape of a claude setup-token
+// OAuth token: a literal "sk-ant-oat" prefix, a two digit version number,
+// then a base64url-ish body. Confirmed against a real setup-token run
+// rather than guessed, this is the primary match strategy.
+var tokenPattern = regexp.MustCompile(`sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}`)
+
+// parseToken finds the generated token in claude setup-token's output.
+// The real output prints the token on its own line, after a label line
+// ending in a bare colon and a blank line, like:
+//
+//	Your OAuth token (valid for 1 year):
+//
+//	sk-ant-oat01-...
+//
+// The primary match is tokenPattern, a confirmed real prefix, checked
+// first and matched anywhere in the output regardless of line structure.
+// A label based fallback covers the case where a future claude version
+// changes the token's prefix: it looks for a line containing the word
+// "token", takes the value from after a colon on that same line if
+// there is one, otherwise from the next non-blank line, on the theory
+// that CLI tools generally print a generated credential either inline
+// or directly below a label naming it. Because that fallback is a
+// heuristic rather than a confirmed format, callers must never trust
+// a fallback-sourced result outright: it's a candidate for a human to
+// confirm, same as an empty result means falling back to asking the
+// user to paste the token by hand.
 func parseToken(output string) string {
-	for _, line := range strings.Split(output, "\n") {
+	if match := tokenPattern.FindString(output); match != "" {
+		return match
+	}
+
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
 
 		// Split on the first colon, not the last: using the label (the
@@ -100,17 +123,30 @@ func parseToken(output string) string {
 		// https://example.com/oauth/authorize?scope=..." get rejected
 		// below for looking like a URL, instead of returning everything
 		// after the URL's own "https:" as if it were the token.
-		idx := strings.Index(line, ":")
-		if idx == -1 || idx == len(line)-1 {
-			continue
+		var label, value string
+		if idx := strings.Index(line, ":"); idx != -1 {
+			label = strings.ToLower(line[:idx])
+			value = strings.TrimSpace(line[idx+1:])
+		} else {
+			label = strings.ToLower(line)
 		}
 
-		label := strings.ToLower(line[:idx])
 		if !containsWord(label, "token") {
 			continue
 		}
 
-		value := strings.TrimSpace(line[idx+1:])
+		if value == "" {
+			// The real output shape: nothing follows the colon on the
+			// label's own line, the value is on the next non-blank line
+			// instead.
+			for j := i + 1; j < len(lines); j++ {
+				if candidate := strings.TrimSpace(lines[j]); candidate != "" {
+					value = candidate
+					break
+				}
+			}
+		}
+
 		if value == "" || strings.ContainsAny(value, " \t") || len(value) < 20 {
 			continue
 		}

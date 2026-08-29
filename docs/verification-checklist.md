@@ -34,34 +34,37 @@ they're the parts no test suite can stand in for.
   the spawned shell and confirmed only the expected vars survived.
 - Confirmed cleanup after every one of the above: no leftover Keychain
   items, no leftover files outside the intended temp/config directories.
+- Ran a real `claude setup-token` login end to end (2026-08-29). The
+  auto-detection missed it on the first try, so the fallback (show the
+  raw output, prompt to paste the token by hand) kicked in, exactly as
+  designed, and the manual paste worked as a stopgap. The real output
+  put the token on its own line below a label ending in a bare colon,
+  a shape the original same-line-only heuristic didn't handle, and it
+  confirmed the real token prefix is `sk-ant-oat`. Fixed the parser to
+  match that confirmed prefix directly, with the label based heuristic
+  kept only as a fallback for if the format changes again. Not yet
+  re-run against a fresh real login since the fix, worth doing once to
+  confirm auto-detection actually succeeds now instead of relying on
+  the fallback again.
 
 ## Not yet run, needs a human
 
 These need a real Claude account and a real browser, which isn't
 something I can do from an automated session.
 
-1. **Real `claude setup-token` login.** Run `sanctum profile add
-   <name> --credential-type oauth` (or pick oauth interactively) end to
-   end, complete the real browser login, and confirm sanctum's parser
-   actually finds the token in the command's real output. If it doesn't,
-   confirm the fallback (show the raw output, prompt to paste the token by
-   hand) kicks in cleanly rather than silently failing. Either way, note
-   what the real output looked like so `internal/setuptoken`'s parser can
-   be tightened against real data instead of the best effort heuristic it
-   currently has to rely on.
-2. **Two profiles active at once, for real.** Pick two real accounts
+1. **Two profiles active at once, for real.** Pick two real accounts
    (ideally one API key profile and one oauth profile), run `sanctum
    shell` for each in two separate terminal panes at the same time, and
    run `claude` in both. Confirm each one authenticates as the expected
    account with no cross contamination, and that creating/using the oauth
    session in one pane didn't touch the other pane's Keychain login state.
-3. **Real cmux panes.** Wire `sanctum shell <profile>` into an actual
+2. **Real cmux panes.** Wire `sanctum shell <profile>` into an actual
    cmux pane's `command` field per `docs/cmux-integration.md`, and confirm
    the pane boots directly into the scoped shell, survives a terminal
    resize and Ctrl-C without leaving a zombie process behind, and reports
    the correct profile from `sanctum status` including the real
    `CMUX_SURFACE_ID` for that specific pane.
-4. **The one time Keychain permission prompt.** The first time a freshly
+3. **The one time Keychain permission prompt.** The first time a freshly
    built `sanctum` binary reads a Keychain item it didn't just create in
    the same process (which is the normal case: `profile add` creates it,
    a later `sanctum shell`/`env` invocation reads it), macOS may show a
